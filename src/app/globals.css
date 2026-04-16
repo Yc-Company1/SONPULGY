@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body { background: #0b0d12; color: #e6e7eb; }
+* { box-sizing: border-box; }
+
+.btn {
+  @apply inline-flex items-center justify-center px-4 py-2 rounded-lg font-medium transition border border-border bg-panel2 hover:bg-border;
+}
+.btn-primary {
+  @apply bg-accent hover:bg-indigo-500 border-accent text-white;
+}
+.card {
+  @apply bg-panel border border-border rounded-xl p-5;
+}
