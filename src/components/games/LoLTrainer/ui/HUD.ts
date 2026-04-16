@@ -19,7 +19,9 @@ export function drawHUD(
   flashCooldown = 0,
   flashCooldownMax = 30,
   stopped = false,
-  flashKey: "D" | "F" = "F"
+  flashKey: "D" | "F" = "F",
+  attackCooldown = 0,
+  attackCooldownMax = 1
 ) {
   // top bar
   ctx.fillStyle = "rgba(6, 14, 12, 0.92)";
@@ -57,26 +59,31 @@ export function drawHUD(
   ctx.font = "12px ui-monospace, monospace";
   ctx.fillText(`CS ${cs} / ${cs + missedCS}`, gx, 78);
 
-  // bottom: skill slots — Q / F / S
+  // bottom: skill slots — A / Q / F / S
   const slotSize = 54;
   const slotY = h - slotSize - 20;
-  const totalW = slotSize * 3 + 20;
+  const totalW = slotSize * 4 + 30;
   const baseX = (w - totalW) / 2;
 
-  const sP = 1 - Math.max(0, champ.skillCooldown) / champ.stats.skill.cooldown;
-  drawSlot(ctx, baseX, slotY, slotSize, champ.stats.skill.key, champ.stats.skill.color, sP, champ.stats.skill.name);
+  // A 슬롯: 평타 쿨타임 게이지
+  const aP = attackCooldownMax > 0 ? 1 - Math.max(0, attackCooldown) / attackCooldownMax : 1;
+  drawSlot(ctx, baseX, slotY, slotSize, "A", aP >= 1 ? "#ffdc60" : "#a0a0a0", aP, "평타(A+클릭)");
 
-  const fx = baseX + slotSize + 10;
+  const qx = baseX + slotSize + 10;
+  const sP = 1 - Math.max(0, champ.skillCooldown) / champ.stats.skill.cooldown;
+  drawSlot(ctx, qx, slotY, slotSize, champ.stats.skill.key, champ.stats.skill.color, sP, champ.stats.skill.name);
+
+  const fx = qx + slotSize + 10;
   const fP = 1 - Math.max(0, flashCooldown) / flashCooldownMax;
   const fLabel = flashCooldown > 0 ? `${Math.ceil(flashCooldown)}s` : null;
   drawSlot(ctx, fx, slotY, slotSize, flashKey, "#60b4ff", fP, "FLASH", fLabel);
 
-  const stx = baseX + (slotSize + 10) * 2;
+  const stx = fx + slotSize + 10;
   drawSlot(ctx, stx, slotY, slotSize, "S", stopped ? "#ffd24a" : "#b3d5c6", stopped ? 1 : 0.35, stopped ? "STOP" : "정지(S)");
 
   // Jhin ammo
   if (champ.stats.id === "jhin") {
-    const ax = baseX + slotSize * 2 + 24, ay = slotY + 12;
+    const ax = stx + slotSize + 8, ay = slotY + 12;
     for (let i = 0; i < 4; i++) {
       const filled = i < champ.ammo;
       ctx.fillStyle = filled ? champ.stats.accent : "rgba(255,255,255,0.18)";
@@ -97,7 +104,7 @@ export function drawHUD(
   }
   // Caitlyn headshot bar
   if (champ.stats.id === "caitlyn") {
-    const ax = baseX - 80, ay = slotY + 16;
+    const ax = stx + slotSize + 8, ay = slotY + 16;
     ctx.fillStyle = "#8ccdb9";
     ctx.font = "9px ui-monospace, monospace";
     ctx.textAlign = "left";

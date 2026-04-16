@@ -366,7 +366,7 @@ export class RenderSystem {
     ctx.globalAlpha = 1;
   }
 
-  drawChampion(champ: Champion, time: number, enemy = false) {
+  drawChampion(champ: Champion, time: number, enemy = false, attackReadyFlash = 0) {
     const ctx = this.ctx;
     const { primary, accent, bodyGlow } = champ.stats;
     const bodyColor = enemy ? "#b8324b" : primary;
@@ -444,6 +444,17 @@ export class RenderSystem {
     ctx.beginPath();
     ctx.arc(champ.pos.x, champ.pos.y, champ.radius + 7, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * cdP);
     ctx.stroke();
+
+    // 공격 가능 신호: 쿨타임 완료 시 링 한번 반짝임 (플레이어만)
+    if (!enemy && attackReadyFlash > 0) {
+      const flashAlpha = Math.min(1, attackReadyFlash / 0.15);
+      const flashRadius = champ.radius + 7 + (1 - flashAlpha) * 12;
+      ctx.strokeStyle = `rgba(255, 220, 80, ${flashAlpha * 0.8})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(champ.pos.x, champ.pos.y, flashRadius, 0, Math.PI * 2);
+      ctx.stroke();
+    }
 
     // HP bar over head
     this.drawHpBar(

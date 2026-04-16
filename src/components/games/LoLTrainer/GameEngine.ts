@@ -37,6 +37,8 @@ export class GameEngine {
   attackMovePoint: { x: number; y: number } | null = null;
   attackMoveTarget: { ref: Champion | Minion; type: "champion" | "minion" } | null = null;
   stopped = false;
+  attackReadyFlash = 0; // 공격 가능 신호 링 반짝임 타이머
+  wasAttackOnCooldown = false; // 쿨타임 완료 감지용
   flashCooldownMax = 30;
   flashCooldown = 0;
   flashTrail: { from: { x: number; y: number }; to: { x: number; y: number }; life: number; maxLife: number } | null = null;
@@ -91,9 +93,35 @@ export class GameEngine {
       },
       onAttackMove: (x, y) => {
         if (this.ended) return;
-        this.attackMovePoint = { x, y };
-        this.attackMoveTarget = null;
         this.stopped = false;
+        const now = performance.now() / 1000;
+        // A+좌클릭: 커서 기준 타겟팅 후 평타
+        const target = this.findAttackMoveTarget(x, y);
+        if (target) {
+          const distToTarget = Math.hypot(
+            target.ref.pos.x - this.champ.pos.x,
+            target.ref.pos.y - this.champ.pos.y
+          );
+          if (distToTarget <= this.champ.attackRangePx) {
+            // 사거리 안: 즉시 평타 발사 (쿨타임 체크 포함)
+            if (this.champ.canAutoAttack()) {
+              this.combat.fireAutoAttackAt(this.champ, target.ref, this.projectiles, now);
+              this.champ.moveTo(this.champ.pos.x, this.champ.pos.y, now); // 정지
+              this.attackMovePoint = null;
+              this.attackMoveTarget = target;
+            }
+            // 쿨타임 중이면 아무 반응 없음
+          } else {
+            // 사거리 밖: 타겟 향해 이동만 (도착해도 자동공격 X)
+            this.attackMovePoint = { x: target.ref.pos.x, y: target.ref.pos.y };
+            this.attackMoveTarget = target;
+            this.champ.moveTo(target.ref.pos.x, target.ref.pos.y, now);
+          }
+        } else {
+          // 적 없으면 아무것도 안 함
+          this.attackMovePoint = null;
+          this.attackMoveTarget = null;
+        }
       },
       onStop: () => {
         if (this.ended) return;
@@ -151,6 +179,8 @@ export class GameEngine {
     this.attackMovePoint = null;
     this.attackMoveTarget = null;
     this.stopped = false;
+    this.attackReadyFlash = 0;
+    this.wasAttackOnCooldown = false;
     this.flashCooldown = 0;
     this.flashTrail = null;
     this.particles = [];
@@ -209,10 +239,15 @@ export class GameEngine {
     // minion AI + attacks
     this.combat.updateMinions(this.allyMinions, this.enemyMinions, this.champ, this.enemyChamp, dt, this.projectiles);
 
-    // champion autos
-    if (!this.stopped) {
-      this.combat.tryChampionAutoAttack(this.champ, [...this.allyMinions, ...this.enemyMinions], this.enemyChamp.hp > 0 ? this.enemyChamp : null, this.projectiles, now);
+    // 플레이어 평타: 자동공격 완전 제거 — 오직 A+좌클릭으로만 발사
+    // 공격 가능 신호: 쿨타임 완료 시 링 반짝임
+    if (this.wasAttackOnCooldown && this.champ.canAutoAttack()) {
+      this.attackReadyFlash = 0.3;
     }
+    this.wasAttackOnCooldown = !this.champ.canAutoAttack();
+    if (this.attackReadyFlash > 0) this.attackReadyFlash -= dt;
+
+    // 적 챔피언 AI만 자동공격 유지
     if (this.enemyChamp.hp > 0) {
       this.combat.tryChampionAutoAttack(this.enemyChamp, [...this.allyMinions, ...this.enemyMinions], this.champ, this.projectiles, now);
     }
@@ -355,43 +390,57 @@ export class GameEngine {
     void dt;
   }
 
+  // A+클릭 커서 기준 타겟 탐색 (챔피언/미니언 구분 없이 커서에서 가장 가까운 적)
+  private findAttackMoveTarget(mouseX: number, mouseY: number): { ref: Champion | Minion; type: "champion" | "minion" } | null {
+    const distToMouse = (e: { pos: { x: number; y: number } }) =>
+      Math.hypot(e.pos.x - mouseX, e.pos.y - mouseY);
+
+    let best: { ref: Champion | Minion; type: "champion" | "minion" } | null = null;
+    let bestD = Infinity;
+
+    // 적 챔피언
+    if (this.enemyChamp.hp > 0) {
+      const d = distToMouse(this.enemyChamp);
+      if (d < bestD) { bestD = d; best = { ref: this.enemyChamp, type: "champion" }; }
+    }
+
+    // 적 미니언
+    for (const m of this.enemyMinions) {
+      if (m.dead) continue;
+      const d = distToMouse(m);
+      if (d < bestD) { bestD = d; best = { ref: m, type: "minion" }; }
+    }
+
+    return best;
+  }
+
+  // 이동 중 처리: 사거리 안에 들어오면 정지만 (자동공격 X)
   private processAttackMove(now: number) {
     if (!this.attackMovePoint || this.stopped) return;
-    const CURSOR_SEARCH = 150;
-    const mp = this.attackMovePoint;
 
-    // 1순위: 커서 150px 이내 최근접 적 챔피언
-    let champTarget: Champion | null = null;
-    if (this.enemyChamp.hp > 0) {
-      const d = Math.hypot(this.enemyChamp.pos.x - mp.x, this.enemyChamp.pos.y - mp.y);
-      if (d < CURSOR_SEARCH) champTarget = this.enemyChamp;
-    }
-    // 2순위: 커서 150px 이내 최근접 미니언
-    let minionTarget: Minion | null = null;
-    if (!champTarget) {
-      let bestD = CURSOR_SEARCH;
-      for (const m of this.enemyMinions) {
-        if (m.dead) continue;
-        const d = Math.hypot(m.pos.x - mp.x, m.pos.y - mp.y);
-        if (d < bestD) { bestD = d; minionTarget = m; }
-      }
-    }
-
-    const tRef: Champion | Minion | null = champTarget ?? minionTarget;
-    if (tRef) {
-      this.attackMoveTarget = { ref: tRef, type: champTarget ? "champion" : "minion" };
-      const tx = tRef.pos.x, ty = tRef.pos.y;
-      const d = Math.hypot(tx - this.champ.pos.x, ty - this.champ.pos.y);
-      if (d > this.champ.attackRangePx - 6) {
-        this.champ.moveTo(tx, ty, now);
-      } else {
+    // 타겟이 살아있는지 체크
+    if (this.attackMoveTarget) {
+      const t = this.attackMoveTarget.ref;
+      const alive = (t instanceof Champion) ? t.hp > 0 : !(t as Minion).dead;
+      if (!alive) {
+        this.attackMovePoint = null;
+        this.attackMoveTarget = null;
         this.champ.moveTo(this.champ.pos.x, this.champ.pos.y, now);
+        return;
+      }
+      // 타겟 향해 이동 중 — 사거리 안에 들어오면 정지 (공격 X, 다시 A+클릭 필요)
+      const d = Math.hypot(t.pos.x - this.champ.pos.x, t.pos.y - this.champ.pos.y);
+      if (d <= this.champ.attackRangePx - 6) {
+        this.champ.moveTo(this.champ.pos.x, this.champ.pos.y, now);
+        this.attackMovePoint = null;
+        // attackMoveTarget은 유지 (타겟 마커 표시용)
+      } else {
+        // 타겟의 현재 위치로 계속 이동
+        this.champ.moveTo(t.pos.x, t.pos.y, now);
       }
     } else {
-      // 범위 내 적 없음 → 클릭 위치로 이동만
-      this.attackMoveTarget = null;
-      this.champ.moveTo(mp.x, mp.y, now);
-      const d = Math.hypot(this.champ.pos.x - mp.x, this.champ.pos.y - mp.y);
+      // 타겟 없이 위치 이동 중
+      const d = Math.hypot(this.champ.pos.x - this.attackMovePoint.x, this.champ.pos.y - this.attackMovePoint.y);
       if (d < 6) this.attackMovePoint = null;
     }
   }
@@ -505,7 +554,7 @@ export class GameEngine {
       if (alive) this.render.drawTargetMarker(tr.pos.x, tr.pos.y, tr.radius, this.attackMoveTarget.type);
       else this.attackMoveTarget = null;
     }
-    this.render.drawChampion(this.champ, tSec, false);
+    this.render.drawChampion(this.champ, tSec, false, this.attackReadyFlash);
     if (this.isInAnyBush(this.champ.pos.x, this.champ.pos.y)) {
       this.render.drawBushOverlay(this.champ.pos.x, this.champ.pos.y, 56);
     }
@@ -525,7 +574,8 @@ export class GameEngine {
       this.allyMinions, this.enemyMinions,
       Math.max(0, this.sessionDuration - this.elapsed),
       this.wave, s.gold, s.enemyMinionsKilled, s.missedCS, this.events,
-      this.flashCooldown, this.flashCooldownMax, this.stopped, this.flashKey);
+      this.flashCooldown, this.flashCooldownMax, this.stopped, this.flashKey,
+      this.champ.attackCooldown, this.champ.currentAttackInterval());
 
     // control guide for first 3 seconds
     if (this.elapsed < 3) this.render.drawControlGuide(Math.min(1, (3 - this.elapsed)), this.flashKey);

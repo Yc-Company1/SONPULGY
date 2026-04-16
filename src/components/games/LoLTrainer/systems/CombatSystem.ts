@@ -56,7 +56,7 @@ export class CombatSystem {
     if (since >= 0.02 && since <= 0.45) this.stats.kitingGood += 1;
   }
 
-  // champion AA: target is nearest enemy-team minion or opposing champion
+  // AI 전용: 사거리 내 가장 가까운 적 자동 공격 (적 챔피언 AI만 사용)
   tryChampionAutoAttack(
     champ: Champion,
     minions: Minion[],
@@ -81,6 +81,17 @@ export class CombatSystem {
       }
     }
     if (!best) return;
+    this.fireAutoAttackAt(champ, best.ref, projectiles, now);
+  }
+
+  // 지정된 타겟에 평타 발사 (쿨타임 체크 포함)
+  fireAutoAttackAt(
+    champ: Champion,
+    target: Minion | Champion,
+    projectiles: Projectile[],
+    now: number
+  ): boolean {
+    if (!champ.canAutoAttack()) return false;
 
     let dmg = champ.stats.attackDamage;
     let width = 8;
@@ -92,14 +103,14 @@ export class CombatSystem {
 
     projectiles.push(new Projectile({
       pos: champ.pos,
-      dir: { x: best.pos.x - champ.pos.x, y: best.pos.y - champ.pos.y },
+      dir: { x: target.pos.x - champ.pos.x, y: target.pos.y - champ.pos.y },
       kind: "basic",
       team: champ.team,
       damage: dmg,
       speed,
       width,
       color,
-      targetRef: best.ref,
+      targetRef: target,
       maxRange: champ.attackRangePx * 1.8,
       tag,
       sourceIsChampion: true,
@@ -107,6 +118,7 @@ export class CombatSystem {
     champ.registerAutoFired(now);
     this.stats.autosFired += 1;
     if (!champ.isAI) this.stats.kitingTotal += 1;
+    return true;
   }
 
   fireChampionSkill(champ: Champion, aimX: number, aimY: number, projectiles: Projectile[]) {
